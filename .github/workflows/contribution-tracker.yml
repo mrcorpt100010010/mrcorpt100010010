@@ -1,67 +1,93 @@
-- name: Calculate required contributions
-  run: |
-    python3 <<EOF
-    import os
-    import datetime
-    import requests
-    import json
+name: Contribution Tracker
 
-    start_date = datetime.datetime.strptime(os.environ["START_DATE"], "%Y-%m-%d").date()
-    today = datetime.date.today()
-    daily_target = int(os.environ["DAILY_TARGET"])
-    username = os.environ["USERNAME"]
+on:
+  schedule:
+    - cron: "0 0 * * *" # daily at midnight UTC
+  workflow_dispatch:
 
-    days_passed = (today - start_date).days + 1
-    expected_total = days_passed * daily_target
+jobs:
+  track:
+    runs-on: ubuntu-latest
 
-    print(f"Days passed: {days_passed}")
-    print(f"Expected total contributions: {expected_total}")
+    steps:
+      - name: Run contribution tracker
+        env:
+          START_DATE: "2026-03-31"
+          DAILY_TARGET: 50
+          USERNAME: ${{ github.repository_owner }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }} # use PAT (recommended)
+        run: |
+          python3 <<EOF
+          import os
+          import datetime
+          import requests
+          import json
+          import sys
 
-    token = os.environ.get("GITHUB_TOKEN")
+          # --- Config ---
+          start_date = datetime.datetime.strptime(os.environ["START_DATE"], "%Y-%m-%d").date()
+          today = datetime.date.today()
+          daily_target = int(os.environ["DAILY_TARGET"])
+          username = os.environ["USERNAME"]
+          token = os.environ.get("GITHUB_TOKEN")
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json"
-    }
+          # --- Calculate expected ---
+          days_passed = (today - start_date).days + 1
+          expected_total = days_passed * daily_target
 
-    query = """
-    query($userName:String!) {
-      user(login: $userName) {
-        contributionsCollection {
-          contributionCalendar {
-            totalContributions
+          print(f"📅 Days passed: {days_passed}")
+          print(f"🎯 Expected total contributions: {expected_total}")
+
+          # --- GraphQL query ---
+          headers = {
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/json"
           }
-        }
-      }
-    }
-    """
 
-    response = requests.post(
-        "https://api.github.com/graphql",
-        json={"query": query, "variables": {"userName": username}},
-        headers=headers,
-    )
+          query = """
+          query($userName:String!) {
+            user(login: $userName) {
+              contributionsCollection {
+                contributionCalendar {
+                  totalContributions
+                }
+              }
+            }
+          }
+          """
 
-    data = response.json()
+          response = requests.post(
+              "https://api.github.com/graphql",
+              json={"query": query, "variables": {"userName": username}},
+              headers=headers,
+          )
 
-    # DEBUG: print full response if something is wrong
-    if "data" not in data:
-        print("❌ GitHub API error:")
-        print(json.dumps(data, indent=2))
-        exit(1)
+          data = response.json()
 
-    actual_total = data["data"]["user"]["contributionsCollection"]["contributionCalendar"]["totalContributions"]
+          # --- Error handling ---
+          if "data" not in data:
+              print("❌ GitHub API error:")
+              print(json.dumps(data, indent=2))
+              sys.exit(1)
 
-    print(f"Actual contributions: {actual_total}")
+          if data["data"]["user"] is None:
+              print("❌ User not found or token has no access.")
+              sys.exit(1)
 
-    remaining = expected_total - actual_total
-    today_target = daily_target
+          actual_total = data["data"]["user"]["contributionsCollection"]["contributionCalendar"]["totalContributions"]
 
-    print(f"Remaining total contributions: {remaining}")
-    print(f"Today's target: {today_target}")
+          print(f"📊 Actual contributions: {actual_total}")
 
-    if remaining > 0:
-        print(f"You need at least {today_target} contributions today to stay on track.")
-    else:
-        print("You're on track or ahead 🎉")
-    EOF
+          # --- Calculate remaining ---
+          remaining = expected_total - actual_total
+          today_target = daily_target
+
+          print(f"📉 Remaining contributions to stay on track: {remaining}")
+          print(f"📅 Today's target: {today_target}")
+
+          if remaining > 0:
+              print(f"⚠️ You need at least {today_target} contributions today to stay on track.")
+          else:
+              print("✅ You're on track or ahead 🎉")
+
+          EOF

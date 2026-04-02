@@ -1,0 +1,72 @@
+name: Contribution Tracker
+
+on:
+  schedule:
+    - cron: "0 0 * * *" # runs daily at midnight UTC
+  workflow_dispatch:
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Calculate required contributions
+        env:
+          START_DATE: "2026-03-31"
+          DAILY_TARGET: 50
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          USERNAME: ${{ github.repository_owner }}
+        run: |
+          python3 <<EOF
+          import os
+          import datetime
+          import requests
+
+          start_date = datetime.datetime.strptime(os.environ["START_DATE"], "%Y-%m-%d").date()
+          today = datetime.date.today()
+          daily_target = int(os.environ["DAILY_TARGET"])
+          username = os.environ["USERNAME"]
+
+          days_passed = (today - start_date).days + 1
+          expected_total = days_passed * daily_target
+
+          print(f"Days passed: {days_passed}")
+          print(f"Expected total contributions: {expected_total}")
+
+          # --- OPTIONAL: Fetch actual contributions ---
+          token = os.environ.get("GITHUB_TOKEN")
+
+          headers = {"Authorization": f"Bearer {token}"}
+          query = """
+          query($userName:String!) {
+            user(login: $userName) {
+              contributionsCollection {
+                contributionCalendar {
+                  totalContributions
+                }
+              }
+            }
+          }
+          """
+
+          response = requests.post(
+              "https://api.github.com/graphql",
+              json={"query": query, "variables": {"userName": username}},
+              headers=headers,
+          )
+
+          actual_total = response.json()["data"]["user"]["contributionsCollection"]["contributionCalendar"]["totalContributions"]
+
+          print(f"Actual contributions: {actual_total}")
+
+          remaining = expected_total - actual_total
+          today_target = daily_target
+
+          print(f"Remaining total contributions: {remaining}")
+          print(f"Today's target: {today_target}")
+
+          if remaining > 0:
+              print(f"You need at least {today_target} contributions today to stay on track.")
+          else:
+              print("You're on track or ahead 🎉")
+          EOF
